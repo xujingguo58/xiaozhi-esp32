@@ -933,6 +933,8 @@ void Application::HandleWakeWordDetectedEvent() {
 
 void Application::BeginWakeWordInvoke(const std::string& wake_word) {
     // Must run in the main task with the device in idle state
+    ESP_LOGI(TAG, "Heap before wake word encoding");
+    SystemInfo::PrintHeapStats();
     audio_service_.EncodeWakeWord();
 
     // Always pass through the connecting state, even if the audio channel is
@@ -963,7 +965,11 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 
     // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
+    ESP_LOGI(TAG, "Heap before performance mode");
+    SystemInfo::PrintHeapStats();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    ESP_LOGI(TAG, "Heap after performance mode");
+    SystemInfo::PrintHeapStats();
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {

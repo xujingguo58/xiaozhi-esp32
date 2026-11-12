@@ -5,6 +5,7 @@
 #include "livis_display.h"
 #include "livis_quota.h"
 #include "settings.h"
+#include "system_info.h"
 
 #include <esp_app_desc.h>
 #include <esp_log.h>
@@ -60,6 +61,8 @@ public:
     }
 
     void InitStack() {
+        ESP_LOGI(kTag, "Heap before NimBLE init");
+        SystemInfo::PrintHeapStats();
         if (nimble_port_init() != ESP_OK) {
             ESP_LOGE(kTag, "NimBLE init failed, quota sync disabled");
             return;
@@ -96,6 +99,8 @@ public:
             esp_timer_start_periodic(stale_timer_, kStaleCheckUs);
         }
         nimble_port_freertos_init(HostTask);
+        ESP_LOGI(kTag, "Heap after NimBLE init");
+        SystemInfo::PrintHeapStats();
     }
 
 private:

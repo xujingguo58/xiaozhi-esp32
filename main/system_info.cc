@@ -151,6 +151,16 @@ void SystemInfo::PrintHeapStats() {
     int free_sram = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     int min_free_sram = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
     ESP_LOGI(TAG, "free sram: %u minimal sram: %u", free_sram, min_free_sram);
+    multi_heap_info_t internal = {}, dma = {}, external = {};
+    heap_caps_get_info(&internal, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    heap_caps_get_info(&dma, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    heap_caps_get_info(&external, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    ESP_LOGI(TAG, "heap bytes: internal free=%u used=%u largest=%u min=%u; DMA free=%u largest=%u; PSRAM free=%u used=%u largest=%u min=%u",
+             (unsigned)internal.total_free_bytes, (unsigned)internal.total_allocated_bytes,
+             (unsigned)internal.largest_free_block, (unsigned)internal.minimum_free_bytes,
+             (unsigned)dma.total_free_bytes, (unsigned)dma.largest_free_block,
+             (unsigned)external.total_free_bytes, (unsigned)external.total_allocated_bytes,
+             (unsigned)external.largest_free_block, (unsigned)external.minimum_free_bytes);
 }
 
 void SystemInfo::PrintPmLocks() {
