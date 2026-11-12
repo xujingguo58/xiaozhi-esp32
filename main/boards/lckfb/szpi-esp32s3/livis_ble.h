@@ -38,6 +38,28 @@ public:
         // Standby widgets are created by Application::Initialize after the board
         // constructor returns; restore cached values once that has happened.
         Application::GetInstance().Schedule([this]() { RestoreCached(); });
+        instance_ = this;
+        // Defer the NimBLE stack past the boot allocation storm: starting it at
+        // construction time starved the MQTT TLS read buffer (errno=12) while
+        // the wake-word models and audio pipeline were still loading.
+        const esp_timer_create_args_t init_args = {
+            .callback = InitTick,
+            .arg = nullptr,
+            .name = "livis_ble_init",
+        };
+        if (esp_timer_create(&init_args, &init_timer_) != ESP_OK) {
+            ESP_LOGE(kTag, "unable to create init timer");
+            return;
+        }
+        esp_timer_start_once(init_timer_, kInitDelayUs);
+    }
+
+    static void InitTick(void*) {
+        if (instance_ == nullptr) return;
+        instance_->InitStack();
+    }
+
+    void InitStack() {
         if (nimble_port_init() != ESP_OK) {
             ESP_LOGE(kTag, "NimBLE init failed, quota sync disabled");
             return;
@@ -46,10 +68,13 @@ public:
         ble_hs_cfg.sync_cb = OnHostSync;
         ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
         // LE Secure Connections bonding; writes are rejected until encrypted.
+        // ID keys must be exchanged too: macOS centrals reconnect from rotating
+        // private addresses, and without the peer IRK the bond cannot be
+        // resolved after the first connection drops.
         ble_hs_cfg.sm_bonding = 1;
         ble_hs_cfg.sm_sc = 1;
-        ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC;
-        ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC;
+        ble_hs_cfg.sm_our_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
+        ble_hs_cfg.sm_their_key_dist = BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID;
 
         uint8_t mac[6] = {};
         esp_read_mac(mac, ESP_MAC_BT);
@@ -57,7 +82,6 @@ public:
         std::snprintf(name, sizeof(name), "Livis-%02X%02X", mac[4], mac[5]);
         ble_svc_gap_device_name_set(name);
 
-        instance_ = this;
         ble_svc_gap_init();
         ble_svc_gatt_init();
         ble_gatts_count_cfg(kServices);
@@ -80,6 +104,8 @@ private:
     // Marks the page as old after six hours without a push (Mac asleep or gone).
     static constexpr double kStaleSeconds = 6.0 * 60 * 60;
     static constexpr int64_t kStaleCheckUs = 10LL * 60 * 1000000;
+    // Boot grace period before the NimBLE stack takes its memory.
+    static constexpr int64_t kInitDelayUs = 15LL * 1000000;
     static constexpr const char* kSettingsNamespace = "livis_codex";
     static constexpr const char* kSettingsKey = "quota";
 
@@ -93,6 +119,7 @@ private:
     static uint8_t own_addr_type_;
 
     LivisDisplay* display_;
+    esp_timer_handle_t init_timer_ = nullptr;
     esp_timer_handle_t stale_timer_ = nullptr;
     LivisPageData::Quota five_hour_;
     LivisPageData::Quota weekly_;
@@ -185,18 +212,25 @@ private:
     bool Apply(const char* payload, bool persist) {
         LivisQuotaMessage message;
         if (!LivisQuota::Parse(payload, message)) return false;
-        sent_at_ = message.sent_at;
-        five_hour_ = MakeQuota(message.five_hour_percent, message.five_hour_reset, false);
-        weekly_ = MakeQuota(message.weekly_percent, message.weekly_reset, true);
-        updated_ = LivisQuota::FormatStamp(message.sent_at);
+        // The board stores local wall time as system time with no TZ set
+        // (ota.cc adds the server's timezone offset to the UTC timestamp), so
+        // localtime_r renders true UTC epochs eight hours off. Shift the
+        // payload epochs into the device clock domain using each message's
+        // send time; this also keeps the staleness diff meaningful.
+        const int64_t offset = static_cast<int64_t>(time(nullptr)) - message.sent_at;
+        sent_at_ = message.sent_at + offset;
+        five_hour_ = MakeQuota(message.five_hour_percent, message.five_hour_reset + offset, false);
+        weekly_ = MakeQuota(message.weekly_percent, message.weekly_reset + offset, true);
+        updated_ = LivisQuota::FormatStamp(sent_at_);
         if (persist) {
             // Cache the raw payload so the page survives a reboot.
             Settings settings(kSettingsNamespace, true);
             settings.SetString(kSettingsKey, payload);
         }
         display_->SetQuota(five_hour_, weekly_, updated_);
-        ESP_LOGI(kTag, "quota: 5h %d%%, weekly %d%%", five_hour_.remaining_percent,
-                 weekly_.remaining_percent);
+        ESP_LOGI(kTag, "quota: 5h %d%%, weekly %d%% (tz offset %llds)",
+                 five_hour_.remaining_percent, weekly_.remaining_percent,
+                 static_cast<long long>(offset));
         return true;
     }
 
@@ -224,14 +258,16 @@ private:
     }
 };
 
+// BLE_UUID128_INIT takes the UUID least-significant byte first; these spell
+// e5a1....-c6d2-4b3a-9f0e-5a1ec0ffee01 with ...0001/0002 for the characteristics.
 const ble_uuid128_t LivisBle::kServiceUuid =
-    BLE_UUID128_INIT(0x01, 0xee, 0xff, 0xc0, 0x5a, 0x1e, 0x0e, 0x9f,
+    BLE_UUID128_INIT(0x01, 0xee, 0xff, 0xc0, 0x1e, 0x5a, 0x0e, 0x9f,
                      0x3a, 0x4b, 0xd2, 0xc6, 0x00, 0x00, 0xa1, 0xe5);
 const ble_uuid128_t LivisBle::kQuotaUuid =
-    BLE_UUID128_INIT(0x01, 0xee, 0xff, 0xc0, 0x5a, 0x1e, 0x0e, 0x9f,
+    BLE_UUID128_INIT(0x01, 0xee, 0xff, 0xc0, 0x1e, 0x5a, 0x0e, 0x9f,
                      0x3a, 0x4b, 0xd2, 0xc6, 0x01, 0x00, 0xa1, 0xe5);
 const ble_uuid128_t LivisBle::kStatusUuid =
-    BLE_UUID128_INIT(0x01, 0xee, 0xff, 0xc0, 0x5a, 0x1e, 0x0e, 0x9f,
+    BLE_UUID128_INIT(0x01, 0xee, 0xff, 0xc0, 0x1e, 0x5a, 0x0e, 0x9f,
                      0x3a, 0x4b, 0xd2, 0xc6, 0x02, 0x00, 0xa1, 0xe5);
 LivisBle* LivisBle::instance_ = nullptr;
 uint8_t LivisBle::own_addr_type_ = 0;
