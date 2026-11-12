@@ -56,6 +56,8 @@ public:
         weekday_ = RowLabel(date_row, "");
         wifi_ = RowLabel(date_row, "");
         lv_obj_set_style_text_font(wifi_, icon_font, 0);
+        // The icon font has a lower visual center than the date text.
+        lv_obj_set_style_translate_y(wifi_, -2, 0);
         clock_ = Label(pages_[0], "--:--", 74, 190);
         lv_obj_set_style_text_font(clock_, &lv_font_montserrat_48, 0);
         auto weather_row = Row(pages_[0], 136, 180, 34, LV_FLEX_ALIGN_CENTER);
@@ -66,7 +68,7 @@ public:
         weather_detail_ = Label(pages_[0], "", 170, 176);
         weather_stale_ = Label(pages_[0], "", 190, 130);
 
-        Label(pages_[1], "理想汽车", 37, 150);
+        Label(pages_[1], "理想汽车", 31, 150);
         auto hk_header = Row(pages_[1], 64, 180, 24, LV_FLEX_ALIGN_SPACE_BETWEEN);
         RowLabel(hk_header, "港股 2015");
         hk_change_ = RowLabel(hk_header, "--");
@@ -89,14 +91,28 @@ public:
         RowLabel(us_price_row, "USD");
         stocks_updated_ = Label(pages_[1], "等待更新", 190, 150);
 
-        Label(pages_[2], "Codex 用量", 43, 150);
-        five_ = Label(pages_[2], "5 小时  --", 77, 170);
-        five_bar_ = Progress(pages_[2], 98);
-        five_reset_ = Label(pages_[2], "等待更新", 106, 170);
-        weekly_ = Label(pages_[2], "每周  --", 132, 170);
-        weekly_bar_ = Progress(pages_[2], 153);
-        weekly_reset_ = Label(pages_[2], "等待更新", 161, 170);
-        codex_updated_ = Label(pages_[2], "等待更新", 184, 170);
+        Label(pages_[2], "Codex 用量", 22, 170);
+        auto five_row = Row(pages_[2], 53, 170, 28, LV_FLEX_ALIGN_SPACE_BETWEEN);
+        RowLabel(five_row, "5 小时");
+        five_ = RowLabel(five_row, "--");
+        lv_obj_set_style_text_font(five_, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(five_, lv_color_hex(0x96512F), 0);
+        five_bar_ = Progress(pages_[2], 81);
+        five_reset_ = Label(pages_[2], "等待更新", 85, 170);
+        lv_obj_set_style_text_align(five_reset_, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_color(five_reset_, lv_color_hex(0xA28270), 0);
+
+        auto weekly_row = Row(pages_[2], 112, 170, 28, LV_FLEX_ALIGN_SPACE_BETWEEN);
+        RowLabel(weekly_row, "每周");
+        weekly_ = RowLabel(weekly_row, "--");
+        lv_obj_set_style_text_font(weekly_, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_color(weekly_, lv_color_hex(0x96512F), 0);
+        weekly_bar_ = Progress(pages_[2], 140);
+        weekly_reset_ = Label(pages_[2], "等待更新", 144, 170);
+        lv_obj_set_style_text_align(weekly_reset_, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_color(weekly_reset_, lv_color_hex(0xA28270), 0);
+        codex_updated_ = Label(pages_[2], "等待更新", 177, 180);
+        lv_obj_set_style_text_color(codex_updated_, lv_color_hex(0xA28270), 0);
 
         for (int i = 0; i < 3; ++i) {
             for (int j = 0; j < 3; ++j) {
@@ -297,8 +313,8 @@ private:
         SetQuote(us_, us_change_, data_.us);
         lv_label_set_text(stocks_updated_, !data_.hk.available || !data_.us.available ? "等待更新" :
                           data_.stocks_updated.find(" 旧") != std::string::npos ? "行情待更新" : "");
-        SetQuota(five_, five_reset_, five_bar_, "5 小时", data_.five_hour);
-        SetQuota(weekly_, weekly_reset_, weekly_bar_, "每周", data_.weekly);
+        SetQuota(five_, five_reset_, five_bar_, data_.five_hour);
+        SetQuota(weekly_, weekly_reset_, weekly_bar_, data_.weekly);
         lv_label_set_text(codex_updated_, Updated(data_.codex_updated).c_str());
     }
     static void SetQuote(lv_obj_t* price, lv_obj_t* change, const LivisPageData::Quote& quote) {
@@ -311,16 +327,16 @@ private:
         lv_obj_set_style_text_color(change, lv_color_hex(!has_change || amount == 0 ? 0x806554 :
                                     amount > 0 ? 0xBF564C : 0x4D8C74), 0);
     }
-    static void SetQuota(lv_obj_t* label, lv_obj_t* reset, lv_obj_t* bar, const char* title,
+    static void SetQuota(lv_obj_t* label, lv_obj_t* reset, lv_obj_t* bar,
                          const LivisPageData::Quota& quota) {
         char text[48];
         if (quota.available && quota.remaining_percent >= 0 && quota.remaining_percent <= 100) {
-            std::snprintf(text, sizeof(text), "%s  %d%%", title, quota.remaining_percent);
+            std::snprintf(text, sizeof(text), "%d%%", quota.remaining_percent);
             lv_label_set_text(label, text);
             lv_label_set_text(reset, quota.reset.empty() ? "重置时间未知" : quota.reset.c_str());
             lv_bar_set_value(bar, quota.remaining_percent, LV_ANIM_OFF);
         } else {
-            std::snprintf(text, sizeof(text), "%s  --", title);
+            std::snprintf(text, sizeof(text), "--");
             lv_label_set_text(label, text);
             lv_label_set_text(reset, "等待更新");
             lv_bar_set_value(bar, 0, LV_ANIM_OFF);
