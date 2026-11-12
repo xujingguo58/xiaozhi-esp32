@@ -149,6 +149,13 @@ public:
         data_.stocks_updated = updated;
         RenderData();
     }
+    void SetQuota(const LivisPageData::Quota& five_hour, const LivisPageData::Quota& weekly,
+                  const std::string& updated) {
+        data_.five_hour = five_hour;
+        data_.weekly = weekly;
+        data_.codex_updated = updated;
+        RenderData();
+    }
 
     void UpdateClockAndWifi() {
         if (clock_ == nullptr) return;

@@ -1,6 +1,7 @@
 #include "wifi_board.h"
 #include "codecs/box_audio_codec.h"
 #include "display/lcd_display.h"
+#include "livis_ble.h"
 #include "livis_display.h"
 #include "livis_feeds.h"
 #include "display/emote_display.h"
@@ -72,6 +73,7 @@ private:
     PressToTalkMcpTool* press_to_talk_tool_ = nullptr;
 #if !CONFIG_USE_EMOTE_MESSAGE_STYLE
     std::unique_ptr<LivisFeeds> livis_feeds_;
+    std::unique_ptr<LivisBle> livis_ble_;
 #endif
 
     void InitializeI2c() {
@@ -304,6 +306,8 @@ public:
 #if !CONFIG_USE_EMOTE_MESSAGE_STYLE
         livis_feeds_ = std::make_unique<LivisFeeds>(static_cast<LivisDisplay*>(display_));
         livis_feeds_->Start();
+        livis_ble_ = std::make_unique<LivisBle>(static_cast<LivisDisplay*>(display_));
+        livis_ble_->Start();
 #endif
 
         GetBacklight()->RestoreBrightness();

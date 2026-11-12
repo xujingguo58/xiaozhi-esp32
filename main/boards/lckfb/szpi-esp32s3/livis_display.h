@@ -161,6 +161,12 @@ public:
         if (lock && eyes_[0] != nullptr) pages_.SetStocks(hk, us, updated);
     }
 
+    void SetQuota(const LivisPageData::Quota& five_hour, const LivisPageData::Quota& weekly,
+                  const std::string& updated) {
+        DisplayLockGuard lock(this);
+        if (lock && eyes_[0] != nullptr) pages_.SetQuota(five_hour, weekly, updated);
+    }
+
     void SetEmotion(const char* emotion) override {
         // Keep the Livis eyes visible when the server sends a stock emoji.
         (void)emotion;
