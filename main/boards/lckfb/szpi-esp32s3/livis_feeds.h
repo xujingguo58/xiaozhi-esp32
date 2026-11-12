@@ -124,21 +124,25 @@ private:
         return "天气";
     }
 
-    bool ResolveLocation() {
-        // Optional manual override, stored in NVS as decimal-degree strings; blank means IP location.
+    // Manual override or previously persisted IP location, stored in NVS as
+    // decimal-degree strings. A successful IP lookup writes the same keys, so
+    // later boots skip the geolocation endpoint; erase lat/lon to re-locate.
+    bool LoadCachedLocation() {
         Settings settings("livis_loc", false);
         std::string lat = settings.GetString("lat", ""), lon = settings.GetString("lon", "");
-        if (!lat.empty() && !lon.empty()) {
-            char *lat_end = nullptr, *lon_end = nullptr;
-            double a = std::strtod(lat.c_str(), &lat_end), b = std::strtod(lon.c_str(), &lon_end);
-            if (lat_end != lat.c_str() && *lat_end == '\0' && lon_end != lon.c_str() &&
-                *lon_end == '\0' && std::isfinite(a) && std::isfinite(b) &&
-                a >= -90 && a <= 90 && b >= -180 && b <= 180) {
-                latitude_ = a; longitude_ = b;
-                city_ = settings.GetString("city", "已设位置");
-                return has_location_ = true;
-            }
-        }
+        if (lat.empty() || lon.empty()) return false;
+        char *lat_end = nullptr, *lon_end = nullptr;
+        double a = std::strtod(lat.c_str(), &lat_end), b = std::strtod(lon.c_str(), &lon_end);
+        if (lat_end == lat.c_str() || *lat_end != '\0' || lon_end == lon.c_str() ||
+            *lon_end != '\0' || !std::isfinite(a) || !std::isfinite(b) ||
+            a < -90 || a > 90 || b < -180 || b > 180) return false;
+        latitude_ = a; longitude_ = b;
+        city_ = settings.GetString("city", "已设位置");
+        return has_location_ = true;
+    }
+
+    bool ResolveLocation() {
+        if (LoadCachedLocation()) return true;
         std::string body;
         if (!Get("https://ipwho.is/?lang=zh-CN", body, 8192)) return false;
         cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
@@ -151,6 +155,14 @@ private:
             latitude_ = a; longitude_ = b;
             city_ = cJSON_IsString(city) && city->valuestring[0] ? city->valuestring : "IP定位";
             has_location_ = true;
+            // Persist so weather is never again blocked by this endpoint.
+            Settings writer("livis_loc", true);
+            char text[24];
+            std::snprintf(text, sizeof(text), "%.4f", latitude_);
+            writer.SetString("lat", text);
+            std::snprintf(text, sizeof(text), "%.4f", longitude_);
+            writer.SetString("lon", text);
+            writer.SetString("city", city_);
         }
         cJSON_Delete(root);
         return ok;
@@ -277,6 +289,12 @@ private:
                     } else {
                         next_location_ = now + RetryDelay(location_failures_);
                         ESP_LOGW("LivisFeeds", "Weather location unavailable; retry scheduled");
+                        // Geolocation endpoints are the flakiest link on this
+                        // network; fall back to persisted coordinates so the
+                        // weather fetch itself is not held hostage.
+                        if (LoadCachedLocation()) {
+                            ESP_LOGI("LivisFeeds", "Using persisted location");
+                        }
                     }
                 }
                 if (has_location_ && now >= next_weather_) {
