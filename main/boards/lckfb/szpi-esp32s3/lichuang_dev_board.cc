@@ -1,6 +1,8 @@
 #include "wifi_board.h"
 #include "codecs/box_audio_codec.h"
 #include "display/lcd_display.h"
+#include "livis_display.h"
+#include "livis_feeds.h"
 #include "display/emote_display.h"
 #include "application.h"
 #include "button.h"
@@ -68,6 +70,9 @@ private:
     Pca9557* pca9557_;
     Esp32Camera* camera_;
     PressToTalkMcpTool* press_to_talk_tool_ = nullptr;
+#if !CONFIG_USE_EMOTE_MESSAGE_STYLE
+    std::unique_ptr<LivisFeeds> livis_feeds_;
+#endif
 
     void InitializeI2c() {
         // Initialize I2C peripheral
@@ -108,6 +113,13 @@ private:
                 EnterWifiConfigMode();
                 return;
             }
+#if !CONFIG_USE_EMOTE_MESSAGE_STYLE
+            if (app.GetDeviceState() == kDeviceStateIdle &&
+                (!press_to_talk_tool_ || !press_to_talk_tool_->IsPressToTalkEnabled())) {
+                static_cast<LivisDisplay*>(display_)->NextStandbyPage();
+                return;
+            }
+#endif
             // In press-to-talk mode the click event is handled by press down/up
             if (!press_to_talk_tool_ || !press_to_talk_tool_->IsPressToTalkEnabled()) {
                 app.ToggleChatState();
@@ -170,7 +182,7 @@ private:
 #if CONFIG_USE_EMOTE_MESSAGE_STYLE
         display_ = new emote::EmoteDisplay(panel, panel_io, DISPLAY_WIDTH, DISPLAY_HEIGHT);
 #else
-        display_ = new SpiLcdDisplay(panel_io, panel,
+        display_ = new LivisDisplay(panel_io, panel,
             DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
 #endif
     }
@@ -288,6 +300,11 @@ public:
         InitializeButtons();
         InitializeCamera();
         InitializeTools();
+
+#if !CONFIG_USE_EMOTE_MESSAGE_STYLE
+        livis_feeds_ = std::make_unique<LivisFeeds>(static_cast<LivisDisplay*>(display_));
+        livis_feeds_->Start();
+#endif
 
         GetBacklight()->RestoreBrightness();
     }
