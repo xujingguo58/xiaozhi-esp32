@@ -18,4 +18,6 @@ cmake --build simulator/build -j
 
 修改真实界面文件后重新编译模拟器即可预览；修改示例数据请编辑 `simulator/main.cpp`。运行 `./simulator/build/speaker_simulator --self-test` 可检查页面和状态切换。
 
+首页室内温湿度为模拟器示例，不连接米家。`--font-check` 检查室内控件在固件专用字库中的字形；`--screenshot /tmp/livis.bmp` 将 LVGL 实际绘制结果保存为 BMP。室内字体使用 LVGL 附带的 Source Han Sans SC 子集（OFL，许可见板级目录的 `livis_indoor_font_OFL.txt`），与 macOS 补字回退无关。
+
 桌面基类仅模拟界面所需的部分 LCD 行为，字体优先使用固件内置字库，缺失的字形由 macOS 的苹方字体通过 FreeType 补充；模拟器使用 macOS 字体补齐缺字，字形和间距可能与真机不同。硬件、网络、实际数据源、定时器调度和整机性能仍需真机验证。

@@ -155,6 +155,11 @@ public:
         if (lock && eyes_[0] != nullptr) pages_.SetWeather(weather);
     }
 
+    void SetIndoor(const LivisPageData::Indoor& indoor) {
+        DisplayLockGuard lock(this);
+        if (lock && eyes_[0] != nullptr) pages_.SetIndoor(indoor);
+    }
+
     void SetStocks(const LivisPageData::Quote& hk, const LivisPageData::Quote& us,
                    const std::string& updated) {
         DisplayLockGuard lock(this);

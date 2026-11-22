@@ -4,6 +4,9 @@
 #include "board.h"
 #include "livis_display.h"
 #include "settings.h"
+#include "application.h"
+
+#include <sdkconfig.h>
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -18,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <string>
 #include <vector>
@@ -36,6 +40,9 @@ public:
 private:
     LivisDisplay* display_;
     LivisPageData::Weather weather_;
+    LivisPageData::Indoor indoor_;
+    std::string indoor_read_at_;
+    int64_t next_indoor_ = 0, indoor_success_ = 0;
     LivisPageData::Quote hk_, us_;
     std::string stocks_updated_;
     double latitude_ = 0, longitude_ = 0;
@@ -57,13 +64,14 @@ private:
     static void TaskEntry(void* arg) { static_cast<LivisFeeds*>(arg)->Run(); }
 
     static bool Get(const std::string& url, std::string& body, size_t limit,
-                    const char* referer = nullptr) {
+                    const char* referer = nullptr, const char* bearer = nullptr) {
         auto http = Board::GetInstance().GetNetwork()->CreateHttp(5);
         if (!http) return false;
-        http->SetTimeout(8000);
+        http->SetTimeout(bearer ? 25000 : 8000);
         http->SetHeader("Accept-Encoding", "identity");
         http->SetHeader("User-Agent", "LivisDesktop/0.1");
         if (referer) http->SetHeader("Referer", referer);
+        if (bearer && *bearer) http->SetHeader("Authorization", std::string("Bearer ") + bearer);
         if (!http->Open("GET", url)) return false;
         const auto status = http->GetStatusCode();
         if (!status || *status != 200) { http->Close(); return false; }
@@ -101,6 +109,51 @@ private:
     static std::string Temperature(double value) {
         return livis::FormatTemperature(value);
     }
+
+    static bool IndoorRange(cJSON* root, const char* key, double low, double high,
+                            const char* unit, std::string& result) {
+        auto object = Field(root, key);
+        double min, max, count;
+        if (!Number(object, "min", min) || !Number(object, "max", max) ||
+            !Number(object, "count", count) || count < 1 || min < low || max > high || min > max) return false;
+        char text[48];
+        if (std::lround(min) == std::lround(max))
+            std::snprintf(text, sizeof(text), "%.0f%s", min, unit);
+        else
+            std::snprintf(text, sizeof(text), "%.0f~%.0f%s", min, max, unit);
+        result = text;
+        return true;
+    }
+
+    bool UpdateIndoor(int64_t now) {
+        if (std::strncmp(CONFIG_LIVIS_INDOOR_URL, "https://", 8) != 0) {
+            ESP_LOGE("LivisFeeds", "Indoor API requires HTTPS");
+            return false;
+        }
+        std::string body;
+        if (!Get(CONFIG_LIVIS_INDOOR_URL, body, 4096, nullptr, CONFIG_LIVIS_INDOOR_TOKEN)) return false;
+        cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+        auto status = Field(root, "status");
+        auto read_at = Field(root, "read_at");
+        LivisPageData::Indoor value;
+        bool ok = cJSON_IsString(status) && status->valuestring &&
+                  (!std::strcmp(status->valuestring, "ok") || !std::strcmp(status->valuestring, "partial")) &&
+                  cJSON_IsString(read_at) && read_at->valuestring && *read_at->valuestring;
+        if (ok) {
+            value.temperature_available = IndoorRange(root, "temperature_c", -40, 85, "°", value.temperature);
+            value.humidity_available = IndoorRange(root, "humidity_percent", 0, 100, "%", value.humidity);
+            value.partial = !std::strcmp(status->valuestring, "partial");
+            ok = value.temperature_available || value.humidity_available;
+            if (ok && indoor_read_at_ != read_at->valuestring) {
+                indoor_read_at_ = read_at->valuestring;
+                indoor_success_ = now;
+                indoor_ = value;
+                display_->SetIndoor(indoor_);
+            }
+        }
+        cJSON_Delete(root);
+        return ok;
+    }
     static const char* WeatherName(int code) {
         if (code == 0) return "晴";
         if (code <= 3) return "多云";
@@ -124,9 +177,9 @@ private:
         return "天气";
     }
 
-    // Manual override or previously persisted IP location, stored in NVS as
-    // decimal-degree strings. A successful IP lookup writes the same keys, so
-    // later boots skip the geolocation endpoint; erase lat/lon to re-locate.
+    // Persisted IP location (rewritten after every successful lookup) and the
+    // manual override, stored in NVS as decimal-degree strings; erase lat/lon
+    // to force a fresh IP lookup.
     bool LoadCachedLocation() {
         Settings settings("livis_loc", false);
         std::string lat = settings.GetString("lat", ""), lon = settings.GetString("lon", "");
@@ -141,8 +194,51 @@ private:
         return has_location_ = true;
     }
 
-    bool ResolveLocation() {
-        if (LoadCachedLocation()) return true;
+    bool FinishLocation(double lat, double lon, const char* city) {
+        if (!std::isfinite(lat) || !std::isfinite(lon) ||
+            lat < -90 || lat > 90 || lon < -180 || lon > 180) return false;
+        latitude_ = lat;
+        longitude_ = lon;
+        city_ = city && city[0] ? city : "IP定位";
+        has_location_ = true;
+        Settings writer("livis_loc", true);
+        char text[24];
+        std::snprintf(text, sizeof(text), "%.4f", latitude_);
+        writer.SetString("lat", text);
+        std::snprintf(text, sizeof(text), "%.4f", longitude_);
+        writer.SetString("lon", text);
+        writer.SetString("city", city_);
+        return true;
+    }
+
+    bool Ip9Location() {
+        // Domestic geolocation (https://ip9.com.cn, 60 req/min free tier):
+        // locates the requester without a parameter, UTF-8, lat/lng as strings.
+        std::string body;
+        if (!Get("https://ip9.com.cn/get", body, 4096)) return false;
+        cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+        auto data = Field(root, "data");
+        auto ret = Field(root, "ret");
+        auto lat = Field(data, "lat");
+        auto lng = Field(data, "lng");
+        auto city = Field(data, "city");
+        char *lat_end = nullptr, *lng_end = nullptr;
+        double a = 0, b = 0;
+        bool ok = cJSON_IsNumber(ret) && ret->valuedouble == 200 &&
+                  cJSON_IsString(lat) && lat->valuestring != nullptr &&
+                  cJSON_IsString(lng) && lng->valuestring != nullptr;
+        if (ok) {
+            a = std::strtod(lat->valuestring, &lat_end);
+            b = std::strtod(lng->valuestring, &lng_end);
+            ok = lat_end != lat->valuestring && *lat_end == '\0' &&
+                 lng_end != lng->valuestring && *lng_end == '\0';
+        }
+        if (ok) ok = FinishLocation(a, b, cJSON_IsString(city) ? city->valuestring : nullptr);
+        cJSON_Delete(root);
+        return ok;
+    }
+
+    bool IpWhoLocation() {
         std::string body;
         if (!Get("https://ipwho.is/?lang=zh-CN", body, 8192)) return false;
         cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
@@ -150,22 +246,16 @@ private:
         auto success = Field(root, "success");
         auto city = Field(root, "city");
         bool ok = cJSON_IsTrue(success) && Number(root, "latitude", a) && Number(root, "longitude", b) &&
-                  a >= -90 && a <= 90 && b >= -180 && b <= 180;
-        if (ok) {
-            latitude_ = a; longitude_ = b;
-            city_ = cJSON_IsString(city) && city->valuestring[0] ? city->valuestring : "IP定位";
-            has_location_ = true;
-            // Persist so weather is never again blocked by this endpoint.
-            Settings writer("livis_loc", true);
-            char text[24];
-            std::snprintf(text, sizeof(text), "%.4f", latitude_);
-            writer.SetString("lat", text);
-            std::snprintf(text, sizeof(text), "%.4f", longitude_);
-            writer.SetString("lon", text);
-            writer.SetString("city", city_);
-        }
+                  FinishLocation(a, b, cJSON_IsString(city) ? city->valuestring : nullptr);
         cJSON_Delete(root);
         return ok;
+    }
+
+    // Fresh lookups first (ip9 is domestic and fast, ipwho.is is the backup);
+    // the caller applies the persisted cache when both fail, so a dead
+    // provider never blocks the weather fetch.
+    bool ResolveLocation() {
+        return Ip9Location() || IpWhoLocation();
     }
 
     bool OpenMeteo(LivisPageData::Weather& out) {
@@ -282,6 +372,12 @@ private:
         while (true) {
             const int64_t now = esp_timer_get_time();
             if (WifiManager::GetInstance().IsConnected()) {
+                if (*CONFIG_LIVIS_INDOOR_TOKEN && *CONFIG_LIVIS_INDOOR_URL && now >= next_indoor_ &&
+                    Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+                    bool ok = UpdateIndoor(now);
+                    next_indoor_ = now + (ok ? static_cast<int64_t>(CONFIG_LIVIS_INDOOR_INTERVAL_SECONDS) * 1000000 : kRetryUs);
+                    ESP_LOGI("LivisFeeds", "Indoor update %s", ok ? "completed" : "unavailable");
+                }
                 if (now >= next_location_) {
                     if (ResolveLocation()) {
                         location_failures_ = 0;
@@ -331,6 +427,11 @@ private:
                 }
             }
             // Mark retained data stale even if the connection disappears before a scheduled fetch.
+            const int64_t indoor_stale_us = std::max(5LL * 60 * 1000000,
+                (static_cast<long long>(CONFIG_LIVIS_INDOOR_INTERVAL_SECONDS) + 2 * 60) * 1000000);
+            if (indoor_success_ && now - indoor_success_ > indoor_stale_us && !indoor_.stale) {
+                indoor_.stale = true; display_->SetIndoor(indoor_);
+            }
             if (weather_success_ && now - weather_success_ > kWeatherIntervalUs + kRetryUs &&
                 weather_.updated.find(" 旧") == std::string::npos) {
                 weather_.updated += " 旧"; display_->SetWeather(weather_);

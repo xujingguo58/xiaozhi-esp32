@@ -10,6 +10,8 @@
 #include <ctime>
 #include <string>
 
+LV_FONT_DECLARE(livis_indoor_font);
+
 // Presentation-ready values supplied by future data providers. No network or credentials here.
 struct LivisPageData {
     struct Weather {
@@ -21,6 +23,15 @@ struct LivisPageData {
         std::string maximum;
         std::string updated;
     } weather;
+    // Aggregated indoor values. A provider must exclude stale/offline sources.
+    struct Indoor {
+        bool temperature_available = false;
+        bool humidity_available = false;
+        bool partial = false;
+        bool stale = false;
+        std::string temperature;
+        std::string humidity;
+    } indoor;
     struct Quote {
         bool available = false;
         std::string price;
@@ -51,22 +62,25 @@ public:
             lv_obj_remove_flag(pages_[i], LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_add_flag(pages_[i], LV_OBJ_FLAG_HIDDEN);
         }
-        auto date_row = Row(pages_[0], 43, 185, 26, LV_FLEX_ALIGN_CENTER);
+        auto date_row = Row(pages_[0], 19, 170, 26, LV_FLEX_ALIGN_CENTER);
         date_ = RowLabel(date_row, "--/--");
         weekday_ = RowLabel(date_row, "");
         wifi_ = RowLabel(date_row, "");
         lv_obj_set_style_text_font(wifi_, icon_font, 0);
         // The icon font has a lower visual center than the date text.
         lv_obj_set_style_translate_y(wifi_, -2, 0);
-        clock_ = Label(pages_[0], "--:--", 74, 190);
+        clock_ = Label(pages_[0], "--:--", 45, 190);
         lv_obj_set_style_text_font(clock_, &lv_font_montserrat_48, 0);
-        auto weather_row = Row(pages_[0], 136, 180, 34, LV_FLEX_ALIGN_CENTER);
+        auto weather_row = Row(pages_[0], 102, 180, 34, LV_FLEX_ALIGN_CENTER);
         weather_icon_ = WeatherIcon(weather_row);
         weather_ = RowLabel(weather_row, "待更新");
         temperature_ = RowLabel(weather_row, "--°");
         // Both labels inherit the current theme font, including after a theme refresh.
-        weather_detail_ = Label(pages_[0], "", 170, 176);
-        weather_stale_ = Label(pages_[0], "", 190, 130);
+        weather_detail_ = Label(pages_[0], "", 135, 176);
+        indoor_temperature_ = Label(pages_[0], "室内待更新", 159, 180);
+        indoor_humidity_ = Label(pages_[0], "", 181, 160);
+        lv_obj_set_style_text_font(indoor_temperature_, &livis_indoor_font, 0);
+        lv_obj_set_style_text_font(indoor_humidity_, &livis_indoor_font, 0);
 
         Label(pages_[1], "理想汽车", 31, 150);
         auto hk_header = Row(pages_[1], 64, 180, 24, LV_FLEX_ALIGN_SPACE_BETWEEN);
@@ -142,6 +156,7 @@ public:
     void Home() { page_ = 0; SetVisible(visible_); }
     void SetData(const LivisPageData& data) { data_ = data; RenderData(); }
     void SetWeather(const LivisPageData::Weather& weather) { data_.weather = weather; RenderData(); }
+    void SetIndoor(const LivisPageData::Indoor& indoor) { data_.indoor = indoor; RenderData(); }
     void SetStocks(const LivisPageData::Quote& hk, const LivisPageData::Quote& us,
                    const std::string& updated) {
         data_.hk = hk;
@@ -198,7 +213,8 @@ private:
     lv_obj_t* pages_[3] = {};
     lv_obj_t *date_ = nullptr, *weekday_ = nullptr, *wifi_ = nullptr, *clock_ = nullptr, *weather_ = nullptr;
     lv_obj_t *weather_icon_ = nullptr, *sun_ = nullptr, *cloud_ = nullptr, *rain_ = nullptr;
-    lv_obj_t *temperature_ = nullptr, *weather_detail_ = nullptr, *weather_stale_ = nullptr;
+    lv_obj_t *temperature_ = nullptr, *weather_detail_ = nullptr;
+    lv_obj_t *indoor_temperature_ = nullptr, *indoor_humidity_ = nullptr;
     lv_obj_t *hk_ = nullptr, *hk_change_ = nullptr, *us_ = nullptr;
     lv_obj_t *us_change_ = nullptr, *stocks_updated_ = nullptr, *five_ = nullptr;
     lv_obj_t *five_reset_ = nullptr, *weekly_ = nullptr, *weekly_reset_ = nullptr;
@@ -313,9 +329,24 @@ private:
         UpdateWeatherIcon();
         lv_label_set_text(weather_, data_.weather.available ? data_.weather.summary.c_str() : "待更新");
         lv_label_set_text(temperature_, data_.weather.available ? data_.weather.temperature.c_str() : "--°");
-        const auto range = livis::FormatTemperatureRange(data_.weather.maximum, data_.weather.minimum);
+        auto range = livis::FormatTemperatureRange(data_.weather.maximum, data_.weather.minimum);
+        if (data_.weather.updated.find(" 旧") != std::string::npos) range = "天气待更新";
         lv_label_set_text(weather_detail_, data_.weather.available ? range.c_str() : "");
-        lv_label_set_text(weather_stale_, data_.weather.updated.find(" 旧") != std::string::npos ? "天气待更新" : "");
+        if (data_.indoor.stale) {
+            lv_label_set_text(indoor_temperature_, "室内数据过期");
+            lv_label_set_text(indoor_humidity_, "");
+        } else if (!data_.indoor.temperature_available && !data_.indoor.humidity_available) {
+            lv_label_set_text(indoor_temperature_, "室内待更新");
+            lv_label_set_text(indoor_humidity_, "");
+        } else {
+            const auto temperature = std::string("室内 ") +
+                (data_.indoor.temperature_available ? data_.indoor.temperature : "--");
+            const auto humidity = std::string("湿度 ") +
+                (data_.indoor.humidity_available ? data_.indoor.humidity : "--") +
+                (data_.indoor.partial ? " *" : "");
+            lv_label_set_text(indoor_temperature_, temperature.c_str());
+            lv_label_set_text(indoor_humidity_, humidity.c_str());
+        }
         SetQuote(hk_, hk_change_, data_.hk);
         SetQuote(us_, us_change_, data_.us);
         lv_label_set_text(stocks_updated_, !data_.hk.available || !data_.us.available ? "等待更新" :

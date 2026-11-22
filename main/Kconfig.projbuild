@@ -1152,6 +1152,26 @@ menu "Camera Configuration"
     endif
 endmenu
 
+menu "Livis indoor environment"
+    depends on BOARD_TYPE_LICHUANG_DEV_S3
+    config LIVIS_INDOOR_URL
+        string "Indoor environment HTTPS URL"
+        default ""
+        help
+            Full HTTPS URL of the authenticated indoor environment API.
+            Empty disables the indoor feed. Do not include credentials in the URL.
+    config LIVIS_INDOOR_TOKEN
+        string "Indoor environment API bearer token"
+        default ""
+        help
+            A read-only API token. This value is embedded in the firmware and
+            generated configuration files; do not publish them.
+    config LIVIS_INDOOR_INTERVAL_SECONDS
+        int "Indoor polling interval (seconds)"
+        range 60 3600
+        default 120
+endmenu
+
 menu "TAIJIPAI_S3_CONFIG"
     depends on BOARD_TYPE_TAIJI_PI_S3
     choice I2S_TYPE_TAIJIPI_S3
