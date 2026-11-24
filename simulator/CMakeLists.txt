@@ -9,6 +9,7 @@ add_subdirectory(../managed_components/lvgl__lvgl lvgl)
 target_link_libraries(lvgl PUBLIC SDL2::SDL2 Freetype::Freetype)
 add_executable(speaker_simulator main.cpp
     ../main/boards/lckfb/szpi-esp32s3/livis_indoor_font.c
+    ../main/boards/lckfb/szpi-esp32s3/livis_vehicle_font.c
     ../managed_components/78__xiaozhi-fonts/src/font_noto_sans_basic_20_4.c
     ../managed_components/78__xiaozhi-fonts/src/font_material_symbols_20_4.c)
 target_include_directories(speaker_simulator PRIVATE stubs ../main/boards/lckfb/szpi-esp32s3 ../managed_components/78__xiaozhi-fonts/include)

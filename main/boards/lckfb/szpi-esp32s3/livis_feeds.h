@@ -43,6 +43,8 @@ private:
     LivisPageData::Indoor indoor_;
     std::string indoor_read_at_;
     int64_t next_indoor_ = 0, indoor_success_ = 0;
+    LivisPageData::Vehicle vehicle_;
+    int64_t next_vehicle_ = 0, vehicle_success_ = 0;
     LivisPageData::Quote hk_, us_;
     std::string stocks_updated_;
     double latitude_ = 0, longitude_ = 0;
@@ -150,6 +152,54 @@ private:
                 indoor_ = value;
                 display_->SetIndoor(indoor_);
             }
+        }
+        cJSON_Delete(root);
+        return ok;
+    }
+
+    bool UpdateVehicle(int64_t now) {
+        const std::string indoor_url(CONFIG_LIVIS_INDOOR_URL);
+        const std::string suffix = "/v1/indoor";
+        if (indoor_url.compare(0, 8, "https://") != 0 || indoor_url.size() <= suffix.size() ||
+            indoor_url.compare(indoor_url.size() - suffix.size(), suffix.size(), suffix) != 0) return false;
+        const auto url = indoor_url.substr(0, indoor_url.size() - suffix.size()) + "/v1/vehicle";
+        std::string body;
+        if (!Get(url, body, 8192, nullptr, CONFIG_LIVIS_INDOOR_TOKEN)) return false;
+        cJSON* root = cJSON_ParseWithLength(body.c_str(), body.size());
+        auto status = Field(root, "status");
+        auto standard = Field(root, "range_standard");
+        auto fields = Field(root, "fields");
+        bool ok = cJSON_IsString(status) && status->valuestring &&
+            (!std::strcmp(status->valuestring, "ok") || !std::strcmp(status->valuestring, "partial")) &&
+            cJSON_IsString(standard) && standard->valuestring && !std::strcmp(standard->valuestring, "WLTC") &&
+            cJSON_IsObject(fields);
+        LivisPageData::Vehicle value;
+        auto format_number = [&](const char* key, double low, double high, const char* suffix_text) {
+            double number;
+            if (!Number(Field(fields, key), "value", number) || number < low || number > high) return std::string("--");
+            char text[24];
+            std::snprintf(text, sizeof(text), "%.0f%s", number, suffix_text);
+            return std::string(text);
+        };
+        auto format_state = [&](const char* key, const char* first, const char* second,
+                                const char* first_label, const char* second_label) {
+            auto item = Field(Field(fields, key), "value");
+            if (!cJSON_IsString(item) || !item->valuestring) return std::string("--");
+            if (!std::strcmp(item->valuestring, first)) return std::string(first_label);
+            if (!std::strcmp(item->valuestring, second)) return std::string(second_label);
+            return std::string("--");
+        };
+        if (ok) {
+            value.electric = format_number("range_elec_wltc", 0, 9999, "");
+            value.fuel = format_number("range_fuel_wltc", 0, 9999, "");
+            value.battery = format_number("battery_level", 0, 100, "%");
+            value.temperature = format_number("inside_temp", -40, 85, "°");
+            value.lock = format_state("lock_main", "已上锁", "未上锁", "已锁", "未锁");
+            value.climate = format_state("ac_on", "开启", "关闭", "已开", "已关");
+            value.available = true;
+            vehicle_ = value;
+            vehicle_success_ = now;
+            display_->SetVehicle(vehicle_);
         }
         cJSON_Delete(root);
         return ok;
@@ -378,6 +428,12 @@ private:
                     next_indoor_ = now + (ok ? static_cast<int64_t>(CONFIG_LIVIS_INDOOR_INTERVAL_SECONDS) * 1000000 : kRetryUs);
                     ESP_LOGI("LivisFeeds", "Indoor update %s", ok ? "completed" : "unavailable");
                 }
+                if (*CONFIG_LIVIS_INDOOR_TOKEN && *CONFIG_LIVIS_INDOOR_URL && now >= next_vehicle_ &&
+                    Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+                    const bool ok = UpdateVehicle(now);
+                    next_vehicle_ = now + (ok ? 5LL * 60 * 1000000 : kRetryUs);
+                    ESP_LOGI("LivisFeeds", "Vehicle update %s", ok ? "completed" : "unavailable");
+                }
                 if (now >= next_location_) {
                     if (ResolveLocation()) {
                         location_failures_ = 0;
@@ -431,6 +487,10 @@ private:
                 (static_cast<long long>(CONFIG_LIVIS_INDOOR_INTERVAL_SECONDS) + 2 * 60) * 1000000);
             if (indoor_success_ && now - indoor_success_ > indoor_stale_us && !indoor_.stale) {
                 indoor_.stale = true; display_->SetIndoor(indoor_);
+            }
+            if (vehicle_success_ && now - vehicle_success_ > 15LL * 60 * 1000000 && vehicle_.available) {
+                vehicle_ = LivisPageData::Vehicle{};
+                display_->SetVehicle(vehicle_);
             }
             if (weather_success_ && now - weather_success_ > kWeatherIntervalUs + kRetryUs &&
                 weather_.updated.find(" 旧") == std::string::npos) {

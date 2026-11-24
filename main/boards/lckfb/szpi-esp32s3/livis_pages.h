@@ -11,6 +11,7 @@
 #include <string>
 
 LV_FONT_DECLARE(livis_indoor_font);
+LV_FONT_DECLARE(livis_vehicle_font);
 
 // Presentation-ready values supplied by future data providers. No network or credentials here.
 struct LivisPageData {
@@ -32,6 +33,11 @@ struct LivisPageData {
         std::string temperature;
         std::string humidity;
     } indoor;
+    struct Vehicle {
+        bool available = false;
+        std::string electric = "--", fuel = "--", battery = "--", lock = "--";
+        std::string temperature = "--", climate = "--";
+    } vehicle;
     struct Quote {
         bool available = false;
         std::string price;
@@ -50,9 +56,10 @@ struct LivisPageData {
 // All methods are called with the LVGL lock held, or from the LVGL task.
 class LivisPages {
 public:
+    static constexpr int kPageCount = 4;
     void Create(lv_obj_t* face, int diameter, const lv_font_t* icon_font) {
         diameter_ = diameter;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < kPageCount; ++i) {
             pages_[i] = lv_obj_create(face);
             lv_obj_set_size(pages_[i], diameter, diameter);
             lv_obj_center(pages_[i]);
@@ -128,14 +135,61 @@ public:
         codex_updated_ = Label(pages_[2], "等待更新", 177, 180);
         lv_obj_set_style_text_color(codex_updated_, lv_color_hex(0xA28270), 0);
 
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
+        auto title = Label(pages_[3], "车辆", 24, 100);
+        lv_obj_set_style_text_font(title, &livis_vehicle_font, 0);
+        auto left_title = Label(pages_[3], "纯电续航", 53, 82);
+        auto right_title = Label(pages_[3], "燃油续航", 53, 82);
+        lv_obj_set_x(left_title, -43);
+        lv_obj_set_x(right_title, 43);
+        lv_obj_set_style_text_font(left_title, &livis_vehicle_font, 0);
+        lv_obj_set_style_text_font(right_title, &livis_vehicle_font, 0);
+        lv_obj_set_style_text_color(left_title, lv_color_hex(0x967966), 0);
+        lv_obj_set_style_text_color(right_title, lv_color_hex(0x967966), 0);
+        auto left_value = vehicle_electric_ = Label(pages_[3], "--", 73, 80);
+        auto right_value = vehicle_fuel_ = Label(pages_[3], "--", 73, 80);
+        lv_obj_set_x(left_value, -43);
+        lv_obj_set_x(right_value, 43);
+#if LV_FONT_MONTSERRAT_32
+        lv_obj_set_style_text_font(left_value, &lv_font_montserrat_32, 0);
+        lv_obj_set_style_text_font(right_value, &lv_font_montserrat_32, 0);
+#else
+        lv_obj_set_style_text_font(left_value, &lv_font_montserrat_20, 0);
+        lv_obj_set_style_text_font(right_value, &lv_font_montserrat_20, 0);
+#endif
+        auto left_unit = Label(pages_[3], "km", 110, 45);
+        auto right_unit = Label(pages_[3], "km", 110, 45);
+        auto mode = Label(pages_[3], "WLTC", 110, 45);
+        lv_obj_set_x(left_unit, -43);
+        lv_obj_set_x(right_unit, 43);
+        for (auto label : {left_unit, right_unit, mode}) {
+            lv_obj_set_style_text_font(label, &livis_vehicle_font, 0);
+            lv_obj_set_style_text_color(label, lv_color_hex(0xA18471), 0);
+        }
+        auto rule = lv_obj_create(pages_[3]);
+        lv_obj_set_size(rule, 148, 1);
+        lv_obj_align(rule, LV_ALIGN_TOP_MID, 0, 135);
+        lv_obj_set_style_border_width(rule, 0, 0);
+        lv_obj_set_style_bg_color(rule, lv_color_hex(0xE7D5C5), 0);
+        lv_obj_remove_flag(rule, LV_OBJ_FLAG_SCROLLABLE);
+        auto battery = vehicle_battery_ = Label(pages_[3], "电量 --", 146, 80);
+        auto lock = vehicle_lock_ = Label(pages_[3], "车锁 --", 146, 80);
+        auto inside = vehicle_temperature_ = Label(pages_[3], "车内 --", 170, 80);
+        auto climate = vehicle_climate_ = Label(pages_[3], "空调 --", 170, 80);
+        for (auto label : {battery, lock, inside, climate})
+            lv_obj_set_style_text_font(label, &livis_vehicle_font, 0);
+        lv_obj_set_x(battery, -40);
+        lv_obj_set_x(lock, 40);
+        lv_obj_set_x(inside, -40);
+        lv_obj_set_x(climate, 40);
+        for (int i = 0; i < kPageCount; ++i) {
+            for (int j = 0; j < kPageCount; ++j) {
                 auto dot = lv_obj_create(pages_[i]);
                 lv_obj_set_size(dot, 5, 5);
-                lv_obj_align(dot, LV_ALIGN_BOTTOM_MID, (j - 1) * 12, -diameter * 9 / 100);
+                lv_obj_align(dot, LV_ALIGN_BOTTOM_MID, (2 * j - (kPageCount - 1)) * 6, -diameter * 5 / 100);
                 lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
                 lv_obj_set_style_border_width(dot, 0, 0);
-                lv_obj_set_style_bg_color(dot, lv_color_hex(i == j ? 0xA8663E : 0xDFCBB8), 0);
+                const int active = i == 3 ? 1 : (i == 0 ? 0 : i + 1);
+                lv_obj_set_style_bg_color(dot, lv_color_hex(active == j ? 0xA8663E : 0xDFCBB8), 0);
                 lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
             }
         }
@@ -145,18 +199,22 @@ public:
 
     void SetVisible(bool visible) {
         visible_ = visible;
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < kPageCount; ++i) {
             if (pages_[i] == nullptr) continue;
             if (visible && i == page_) lv_obj_remove_flag(pages_[i], LV_OBJ_FLAG_HIDDEN);
             else lv_obj_add_flag(pages_[i], LV_OBJ_FLAG_HIDDEN);
         }
     }
 
-    void Next() { page_ = (page_ + 1) % 3; SetVisible(visible_); }
+    void Next() {
+        page_ = page_ == 0 ? 3 : page_ == 3 ? 1 : page_ == 1 ? 2 : 0;
+        SetVisible(visible_);
+    }
     void Home() { page_ = 0; SetVisible(visible_); }
     void SetData(const LivisPageData& data) { data_ = data; RenderData(); }
     void SetWeather(const LivisPageData::Weather& weather) { data_.weather = weather; RenderData(); }
     void SetIndoor(const LivisPageData::Indoor& indoor) { data_.indoor = indoor; RenderData(); }
+    void SetVehicle(const LivisPageData::Vehicle& vehicle) { data_.vehicle = vehicle; RenderData(); }
     void SetStocks(const LivisPageData::Quote& hk, const LivisPageData::Quote& us,
                    const std::string& updated) {
         data_.hk = hk;
@@ -210,11 +268,13 @@ private:
     int last_minute_ = -2;
     int last_wifi_ = -1;
     LivisPageData data_;
-    lv_obj_t* pages_[3] = {};
+    lv_obj_t* pages_[kPageCount] = {};
     lv_obj_t *date_ = nullptr, *weekday_ = nullptr, *wifi_ = nullptr, *clock_ = nullptr, *weather_ = nullptr;
     lv_obj_t *weather_icon_ = nullptr, *sun_ = nullptr, *cloud_ = nullptr, *rain_ = nullptr;
     lv_obj_t *temperature_ = nullptr, *weather_detail_ = nullptr;
     lv_obj_t *indoor_temperature_ = nullptr, *indoor_humidity_ = nullptr;
+    lv_obj_t *vehicle_electric_ = nullptr, *vehicle_fuel_ = nullptr, *vehicle_battery_ = nullptr;
+    lv_obj_t *vehicle_lock_ = nullptr, *vehicle_temperature_ = nullptr, *vehicle_climate_ = nullptr;
     lv_obj_t *hk_ = nullptr, *hk_change_ = nullptr, *us_ = nullptr;
     lv_obj_t *us_change_ = nullptr, *stocks_updated_ = nullptr, *five_ = nullptr;
     lv_obj_t *five_reset_ = nullptr, *weekly_ = nullptr, *weekly_reset_ = nullptr;
@@ -326,6 +386,12 @@ private:
     }
     void RenderData() {
         if (weather_ == nullptr) return;
+        lv_label_set_text(vehicle_electric_, data_.vehicle.electric.c_str());
+        lv_label_set_text(vehicle_fuel_, data_.vehicle.fuel.c_str());
+        lv_label_set_text(vehicle_battery_, ("电量 " + data_.vehicle.battery).c_str());
+        lv_label_set_text(vehicle_lock_, ("车锁 " + data_.vehicle.lock).c_str());
+        lv_label_set_text(vehicle_temperature_, ("车内 " + data_.vehicle.temperature).c_str());
+        lv_label_set_text(vehicle_climate_, ("空调 " + data_.vehicle.climate).c_str());
         UpdateWeatherIcon();
         lv_label_set_text(weather_, data_.weather.available ? data_.weather.summary.c_str() : "待更新");
         lv_label_set_text(temperature_, data_.weather.available ? data_.weather.temperature.c_str() : "--°");

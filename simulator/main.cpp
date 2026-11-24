@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
     LivisPageData data;
     data.weather = {true, "上海", "多云", "23°", "18", "26", "12:00"};
     data.indoor = {true, true, false, false, "21~25°", "38~46%"};
+    data.vehicle = {true, "160", "79", "88%", "已锁", "23°", "已开"};
     data.hk = {true, "102.50", "+2.18", "交易中"};
     data.us = {true, "25.60", "-0.85", "交易中"};
     data.stocks_updated = "12:00";
@@ -71,6 +72,12 @@ int main(int argc, char** argv) {
                 ok = false;
             }
         }
+        const uint32_t vehicle_glyphs[] = {0x8f66, 0x8f86, 0x7eaf, 0x7535, 0x7eed, 0x822a,
+            0x71c3, 0x6cb9, 0x91cf, 0x9501, 0x5df2, 0x5f00, 0x5173, 0x95ed, 0x5185, 0x7a7a, 0x8c03};
+        for (auto codepoint : vehicle_glyphs) {
+            lv_font_glyph_dsc_t glyph = {};
+            if (!lv_font_get_glyph_dsc(&livis_vehicle_font, &glyph, codepoint, 0)) ok = false;
+        }
         return ok ? 0 : 1;
     }
     std::puts("Space: next page | 1: standby | 2: listening | 3: thinking | 4: speaking | 5: connecting");
@@ -90,10 +97,15 @@ int main(int argc, char** argv) {
         indoor = data.indoor;
         indoor.partial = true;
         view.SetIndoor(indoor);
-        ok = ok && has_visible_text(screen, "部分传感器离线");
+        ok = ok && has_visible_text(screen, "湿度 38~46% *");
         view.SetIndoor(LivisPageData::Indoor{});
         ok = ok && has_visible_text(screen, "室内待更新") && !has_visible_text(screen, "湿度 38~46%");
         view.SetIndoor(data.indoor);
+        key(SDLK_SPACE);
+        ok = ok && has_visible_text(screen, "车辆") && has_visible_text(screen, "WLTC") &&
+             has_visible_text(screen, "纯电续航") &&
+             has_visible_text(screen, "160") && has_visible_text(screen, "车内 23°") &&
+             has_visible_text(screen, "空调 已开");
         key(SDLK_SPACE);
         ok = ok && has_visible_text(screen, "理想汽车");
         key(SDLK_SPACE);
@@ -103,9 +115,11 @@ int main(int argc, char** argv) {
         std::puts(ok ? "Simulator UI self-test passed" : "Simulator UI self-test failed");
         return ok ? 0 : 1;
     }
-    if (argc > 2 && std::strcmp(argv[1], "--screenshot") == 0) {
+    if (argc > 2 && (std::strcmp(argv[1], "--screenshot") == 0 ||
+                     std::strcmp(argv[1], "--screenshot-vehicle") == 0)) {
         const auto end = SDL_GetTicks() + 4300;
         while (SDL_GetTicks() < end) { lv_timer_handler(); SDL_Delay(5); }
+        if (std::strcmp(argv[1], "--screenshot-vehicle") == 0) key(SDLK_SPACE);
         lv_obj_update_layout(lv_screen_active());
         auto snapshot = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_ARGB8888);
         auto surface = snapshot ? SDL_CreateRGBSurfaceWithFormatFrom(snapshot->data, 320, 240, 32,
